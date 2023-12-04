@@ -6,74 +6,98 @@ from time import gmtime, strftime
 import time
 
 BUFSIZE = 5242880 # 5 MB
-HTTP_HEAD = "HTTP/1.1 "
-CONN_KA = "Connection: Keep-Alive"
+
+http_head = "HTTP/1.1 "
+date_head = "Date: "
+content_length_head = "Content-Length: "
+content_type_head = "Content-Type: "
+ending_lines = "\r\n\r\n"
+conn_ka = "Connection: Keep-Alive"
 content_dir = "content"
-secret_dir = "content/confidential"
+secret_dir = "confidential/"
 lock = threading.Lock()
 status_dir = {"OK": "200", "Partial Content": "206", "Forbidden": "403", "Not Found": "404"}
 
+plain_text = "text/plain"
+css_text = "text/css"
+html_text = "text/html"
+image_gif = "image/gif"
+image_jpeg = "image/jpeg"
+image_png = "image/png"
+video_mp4 = "video/mp4"
+video_webm = "video/webm"
+app_java = "application/javascript"
+app_oct = "application/octet_stream" # others case
+extension_dir = {"txt": plain_text, "css": css_text, "htm": html_text, "html": html_text, 
+                 "gif": image_gif, "jpg": image_jpeg, "jpeg": image_jpeg, "png": image_png,
+                 "mp4": video_mp4, "webm": video_webm, "ogg": video_webm, "js": app_java}
 
-class server_states(enum.Enum):
-  waiting = 1
-  sending = 2
-  
-class Server():
-  def __init__(self, port):
-    self.state = server_states.waiting
+not_found_html = "<html><body><h1>404 Not Found</h1><p>The requested page was not found.</p></body></html>"
+forbidden_html = "<html><body><h1>403 Forbidden</h1><p>The requested page is confidential.</p></body></html>"
     
 def get_time():
-  time_str = time.strftime("%a, %d %b %Y %H:%M:%S", time.gmtime())+ " GMT"
+  # from https://www.w3resource.com/python-exercises/date-time-exercise/python-date-time-exercise-29.php
+  time_str = time.strftime("%a, %d %b %Y %H:%M:%S %p %Z", time.gmtime())
+  time_str = time_str.replace("UTC", "GMT")
+  if ("AM" in time_str):
+    time_str = time_str.replace("AM", "")
+  elif ("PM" in time_str):
+    time_str = time_str.replace("PM", "")
   return time_str
 
 # SAVING PARTIAL CONTENT FOR LATER
-def check_file(filename):
-  # check if forbidden
-  secret_path = secret_dir + filename
-  if (os.path.exists(secret_path)):
+def check_file(filename): # return appropriate status code
+  # check if forbidden -> contains "confidential" dir, checking first
+  if (secret_dir in filename):
     return "Forbidden"
   # check if exists
   content_path = content_dir + filename
-  # print('content path', content_path)
   if (os.path.exists(content_path)):
     return "OK"
   return "Not Found"
   
+# will want to get more info later
 def parse_method(msg):
-  fields = msg.split("\r\n")
+  fields = msg.split("\r\n") # watch ending two \r\n's
   req = fields[0].split(" ")
   filename = req[1]
   return filename
 
-def build_resp(status_code, resp):
-  line_1 = HTTP_HEAD + status_code + " " + resp + "\r\n"
-  line_2 = "Date: " + get_time() + "\r\n"
-  line_3 = CONN_KA + "\r\n"
-  final_resp = line_1 + line_2 + line_3
-  return final_resp
+def get_file_ext(filepath):
+  fields = filepath.split("/")
+  filename = fields[-1]
+  name_ext = filename.split(".")
+  ext = name_ext[-1]
+  return ext
   
+def build_resp(status_code, resp, filepath):
+  http_header = http_head + status_code + " " + resp + "\r\n"
+  date_header = "Date: " + get_time() + "\r\n"
+  connection_header = conn_ka + "\r\n"
   
-def rx_thread(name, socket, server):
-  while True:
-    try:
-      conn, addr = socket.accept() # could be how different clients are differentiated
-      server.client_addr = addr[0]
-      # print('addr', addr)
-      msg, addr = conn.recvfrom(BUFSIZE)
-      msg = msg.decode()
-      filename = parse_method(msg)
-      server.filename = filename
-    except:
-      pass
-
-def tx_thread(name, socket, server):
-  while True:
-    if (server.filename != None):
-      resp = check_file(server.filename)
-      status_code = status_dir[resp]
-      final_resp = build_resp(status_code, resp)
-      # print('client info', server.client_addr, server.port)
-      socket.sendto(final_resp.encode(), (server.client_addr, server.port))
+  if (resp == "Forbidden"): 
+    content_type = content_type_head + html_text + "\r\n"
+    final_resp = http_header + date_header + content_type + connection_header + \
+                ending_lines + forbidden_html
+    # print('final_resp forbidden', final_resp)
+    return final_resp
+  
+  elif (resp == "OK"):
+    file_size = str(os.path.getsize(filepath))
+    content_len = content_length_head + file_size + "\r\n"
+    
+    ext = get_file_ext(filepath)
+    file_type = extension_dir[ext]
+    content_type = content_type_head + file_type + "\r\n"
+    final_resp = http_header + date_header + content_len + content_type + connection_header + ending_lines
+    # print('final resp ok', final_resp)
+    return final_resp
+  
+  elif (resp == "Not Found"): # NOT including content length
+    content_type = content_type_head + html_text + "\r\n"
+    final_resp = http_header + date_header + content_type + connection_header + \
+                ending_lines + not_found_html
+    return final_resp
     
 if __name__ == '__main__':
   port_num = None
@@ -83,7 +107,7 @@ if __name__ == '__main__':
     port_num = int(sys.argv[1])
     
   local_host = "localhost"
-  server = Server(port_num)
+  # server = Server(port_num)
   
     
   s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -101,11 +125,15 @@ if __name__ == '__main__':
     client_sock, client_addr = s.accept()
     msg, addr = client_sock.recvfrom(BUFSIZE)
     msg = msg.decode()
+    print('msg', msg)
     filename = parse_method(msg)
     
-    resp = check_file(filename)
+    resp = check_file(filename) # resp = OK, Forbidden, Not Found, Partial Content
+    content_path = None
+    if (resp == "OK"):
+      content_path = content_dir + filename # need path to get size of file
     status_code = status_dir[resp]
-    final_resp = build_resp(status_code, resp)
+    final_resp = build_resp(status_code, resp, content_path)
     # print('final_resp', final_resp)
     # print('client info', server.client_addr, server.port)
     client_sock.send(final_resp.encode())
