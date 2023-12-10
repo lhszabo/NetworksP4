@@ -129,11 +129,7 @@ def build_resp(status_code, resp, filepath, range_index):
     return final_resp
   elif (resp == "Partial Content"):
     # use range index
-    # print('range index', range_index)
-    # print('path', filepath)
     file_size = str(os.path.getsize(filepath))
-    # print('size', file_size)
-    # content_len = content_length_head + file_size + "\r\n"
     
     ext = get_file_ext(filepath)
     file_type = None
@@ -147,7 +143,6 @@ def build_resp(status_code, resp, filepath, range_index):
     f.seek(range_index)
     chunk = f.read(BUFSIZE)
     f.close()
-    # print('chunk len pc', len(chunk))
   
     end_range_index = range_index + BUFSIZE - 1
     if (end_range_index > int(file_size) - 1):
@@ -159,7 +154,6 @@ def build_resp(status_code, resp, filepath, range_index):
     final_resp = http_header + date_header + content_range + content_len + content_type + \
                 conn_ka + accept_ranges_head + last_modified_head + ending_line
                 
-    # print('final resp', final_resp)x
     final_resp = final_resp.encode()
     final_resp += chunk
     return final_resp
@@ -168,28 +162,15 @@ def http_parser_thread(client_sock):
   while True:
     msg = client_sock.recv(BUFSIZE)
     msg = msg.decode() 
+    print(msg)
     filename, range_index = parse_method(msg)
-    # if (range_index != 0):
-    # print('msg', msg)
-    # print('filename', filename)
     resp = check_file(filename) # resp = OK, Forbidden, Not Found, Partial Content
-    # print('resp', resp)
     content_path = None
     if (resp == "OK" or resp == "Partial Content"):
       content_path = content_dir + filename # need path to get size of file
     status_code = status_dir[resp]
     final_resp = build_resp(status_code, resp, content_path, range_index)
-    # print('final len', len(final_resp))
-    # try:
-    # print(client_sock)
-    # with lock:
     client_sock.sendall(final_resp)
-    # print('sent__________________________')
-    # client_sock.close()
-    # print('closed')
-    # except:
-      # print('unable to send')
-  
   
 if __name__ == '__main__':
   port_num = None
@@ -206,21 +187,14 @@ if __name__ == '__main__':
     s.bind(("localhost", port_num))
     s.listen(1000)
   except:
-    # print('unable to bind')
     pass
   
   while True:
-    try:
-      # print('in while true')
-      
-    # with lock:
+    try:      
       client_sock, client_addr = s.accept()
-      # msg = client_sock.recv(BUFSIZE)
-      # msg = msg.decode()
       http_parser = threading.Thread(target=http_parser_thread, args=(client_sock,), daemon=True)
       http_parser.start()
     except:
-      # print("unable to accept")
       pass
     
     
